@@ -49,6 +49,8 @@ cdef class _LogEntry:
     - line: the line at which the message originated (if applicable)
     - column: the character column at which the message originated (if applicable)
     - filename: the name of the file in which the message originated (if applicable)
+    - node_name: the name of the node in which the error was found (if available)
+    - attributes: the attributes of the element where the error was found (if applicable)
     """
     cdef readonly int domain
     cdef readonly int type
@@ -59,6 +61,8 @@ cdef class _LogEntry:
     cdef basestring _filename
     cdef char* _c_message
     cdef xmlChar* _c_filename
+    cdef readonly basestring node_name
+    cdef readonly dict attributes
 
     def __dealloc__(self):
         tree.xmlFree(self._c_message)
@@ -66,6 +70,37 @@ cdef class _LogEntry:
 
     @cython.final
     cdef _setError(self, xmlerror.xmlError* error):
+        cdef basestring attr_name
+        cdef xmlNode* c_node
+        cdef xmlAttr* c_attr
+        cdef xmlNode* c_child
+        cdef list children
+        self.node_name = None
+        self.attributes = {}
+        c_node = <xmlNode*>error.node
+        if c_node is not NULL:
+            if c_node.name is not NULL:
+                if c_node.ns is not NULL and c_node.ns.href is not NULL:
+                    self.node_name = u"{%s}%s" % (
+                        c_node.ns.href.decode("utf-8"),
+                        c_node.name.decode("utf-8"))
+                else:
+                    self.node_name = c_node.name.decode("utf-8")
+            c_attr = <xmlAttr*>c_node.properties
+            while c_attr is not NULL:
+                child = c_attr.children
+                children = []
+                while child is not NULL:
+                    children.append(child.content.decode("utf-8"))
+                    child = child.next
+                if c_attr.name is not NULL:
+                    if c_attr.ns is not NULL and c_attr.ns.href is not NULL:
+                        attr_name = u"{%s}%s" % (c_attr.ns.href.decode("utf-8"),
+                                                 c_attr.name.decode("utf-8"))
+                    else:
+                        attr_name = c_attr.name.decode("utf-8")
+                    self.attributes[attr_name] = u"".join(children)
+                c_attr = c_attr.next
         self.domain   = error.domain
         self.type     = error.code
         self.level    = <int>error.level
@@ -101,6 +136,8 @@ cdef class _LogEntry:
         self.column  = 0
         self._message = message
         self._filename = filename
+        self.attributes = {}
+        self.node_name = None
 
     def __repr__(self):
         return u"%s:%d:%d:%s:%s:%s: %s" % (
