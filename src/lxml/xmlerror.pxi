@@ -49,8 +49,7 @@ cdef class _LogEntry:
     - line: the line at which the message originated (if applicable)
     - column: the character column at which the message originated (if applicable)
     - filename: the name of the file in which the message originated (if applicable)
-    - node_name: the name of the node in which the error was found (if available)
-    - attributes: the attributes of the element where the error was found (if applicable)
+    - path: the location in which the error was found (if available)
     """
     cdef readonly int domain
     cdef readonly int type
@@ -59,48 +58,19 @@ cdef class _LogEntry:
     cdef readonly int column
     cdef basestring _message
     cdef basestring _filename
+    cdef basestring _path
     cdef char* _c_message
     cdef xmlChar* _c_filename
-    cdef readonly basestring node_name
-    cdef readonly dict attributes
+    cdef xmlChar* _c_path
 
     def __dealloc__(self):
         tree.xmlFree(self._c_message)
         tree.xmlFree(self._c_filename)
+        tree.xmlFree(self._c_path)
 
     @cython.final
     cdef _setError(self, xmlerror.xmlError* error):
-        cdef basestring attr_name
-        cdef xmlNode* c_node
-        cdef xmlAttr* c_attr
-        cdef xmlNode* c_child
-        cdef list children
-        self.node_name = None
-        self.attributes = {}
-        c_node = <xmlNode*>error.node
-        if c_node is not NULL:
-            if c_node.name is not NULL:
-                if c_node.ns is not NULL and c_node.ns.href is not NULL:
-                    self.node_name = u"{%s}%s" % (
-                        c_node.ns.href.decode("utf-8"),
-                        c_node.name.decode("utf-8"))
-                else:
-                    self.node_name = c_node.name.decode("utf-8")
-            c_attr = <xmlAttr*>c_node.properties
-            while c_attr is not NULL:
-                child = c_attr.children
-                children = []
-                while child is not NULL:
-                    children.append(child.content.decode("utf-8"))
-                    child = child.next
-                if c_attr.name is not NULL:
-                    if c_attr.ns is not NULL and c_attr.ns.href is not NULL:
-                        attr_name = u"{%s}%s" % (c_attr.ns.href.decode("utf-8"),
-                                                 c_attr.name.decode("utf-8"))
-                    else:
-                        attr_name = c_attr.name.decode("utf-8")
-                    self.attributes[attr_name] = u"".join(children)
-                c_attr = c_attr.next
+        cdef xmlChar* node_path
         self.domain   = error.domain
         self.type     = error.code
         self.level    = <int>error.level
@@ -108,6 +78,8 @@ cdef class _LogEntry:
         self.column   = error.int2
         self._c_message = NULL
         self._c_filename = NULL
+        self._path = None
+        self._c_path = NULL
         if (error.message is NULL or
                 error.message[0] == b'\0' or
                 error.message[0] == b'\n' and error.message[1] == b'\0'):
@@ -125,6 +97,12 @@ cdef class _LogEntry:
             self._c_filename = tree.xmlStrdup(<const_xmlChar*> error.file)
             if not self._c_filename:
                 raise MemoryError()
+        if error.node is not NULL:
+            node_path = tree.xmlGetNodePath(<xmlNode*>error.node)
+            if node_path is not NULL:
+                self._c_path = tree.xmlStrdup(<const_xmlChar*> node_path)
+                if not self._c_path:
+                    raise MemoryError()
 
     @cython.final
     cdef _setGeneric(self, int domain, int type, int level, int line,
@@ -136,8 +114,8 @@ cdef class _LogEntry:
         self.column  = 0
         self._message = message
         self._filename = filename
-        self.attributes = {}
-        self.node_name = None
+        self._path = None
+        self._c_path = NULL
 
     def __repr__(self):
         return u"%s:%d:%d:%s:%s:%s: %s" % (
@@ -202,6 +180,16 @@ cdef class _LogEntry:
                     self._c_filename = NULL
             return self._filename
 
+    property path:
+        """The XPath for the node where the error was detected.
+        """
+        def __get__(self):
+            if self._path is None and self._c_path is not NULL:
+                #self._path = self._c_path.decode('utf8')
+                self._path = funicode(self._c_path)
+                tree.xmlFree(self._c_path)
+                self._c_path = NULL
+            return self._path
 
 cdef class _BaseErrorLog:
     cdef _LogEntry _first_error
