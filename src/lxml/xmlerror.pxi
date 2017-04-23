@@ -58,7 +58,6 @@ cdef class _LogEntry:
     cdef readonly int column
     cdef basestring _message
     cdef basestring _filename
-    cdef basestring _path
     cdef char* _c_message
     cdef xmlChar* _c_filename
     cdef xmlChar* _c_path
@@ -70,7 +69,6 @@ cdef class _LogEntry:
 
     @cython.final
     cdef _setError(self, xmlerror.xmlError* error):
-        cdef xmlChar* node_path
         self.domain   = error.domain
         self.type     = error.code
         self.level    = <int>error.level
@@ -78,7 +76,6 @@ cdef class _LogEntry:
         self.column   = error.int2
         self._c_message = NULL
         self._c_filename = NULL
-        self._path = None
         self._c_path = NULL
         if (error.message is NULL or
                 error.message[0] == b'\0' or
@@ -98,11 +95,7 @@ cdef class _LogEntry:
             if not self._c_filename:
                 raise MemoryError()
         if error.node is not NULL:
-            node_path = tree.xmlGetNodePath(<xmlNode*>error.node)
-            if node_path is not NULL:
-                self._c_path = tree.xmlStrdup(<const_xmlChar*> node_path)
-                if not self._c_path:
-                    raise MemoryError()
+            self._c_path = tree.xmlGetNodePath(<xmlNode*>error.node)
 
     @cython.final
     cdef _setGeneric(self, int domain, int type, int level, int line,
@@ -114,7 +107,6 @@ cdef class _LogEntry:
         self.column  = 0
         self._message = message
         self._filename = filename
-        self._path = None
         self._c_path = NULL
 
     def __repr__(self):
@@ -184,12 +176,7 @@ cdef class _LogEntry:
         """The XPath for the node where the error was detected.
         """
         def __get__(self):
-            if self._path is None and self._c_path is not NULL:
-                #self._path = self._c_path.decode('utf8')
-                self._path = funicode(self._c_path)
-                tree.xmlFree(self._c_path)
-                self._c_path = NULL
-            return self._path
+            return (self._c_path is not NULL) and funicode(self._c_path) or None
 
 cdef class _BaseErrorLog:
     cdef _LogEntry _first_error
